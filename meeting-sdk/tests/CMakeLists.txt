@@ -1,0 +1,50 @@
+include(GoogleTest)
+
+add_executable(meeting_sdk_tests
+    core/test_errors.cpp
+    core/test_domain.cpp
+    orchestration/test_meeting_state_machine.cpp
+    orchestration/test_transcript_assembler.cpp
+    orchestration/test_meeting_pipeline.cpp
+    audio/test_ring_buffer.cpp
+    audio/test_preprocessor.cpp
+    audio/test_energy_vad.cpp
+    audio/test_synthetic_audio_source.cpp
+    speech/test_segmenter.cpp
+    speech/test_streaming_stt_session.cpp
+    speech/test_heuristic_language_detector.cpp
+    speaker/test_embedding_similarity.cpp
+    speaker/test_speaker_clusterer.cpp
+    speaker/test_enrolled_speaker_identifier.cpp
+    speaker/test_speaker_assigner.cpp
+    intelligence/test_word_frequency.cpp
+    intelligence/test_sentence_splitter.cpp
+    intelligence/test_heuristic_question_extractor.cpp
+    intelligence/test_heuristic_decision_extractor.cpp
+    intelligence/test_heuristic_action_item_extractor.cpp
+    intelligence/test_keyword_topic_extractor.cpp
+    intelligence/test_extractive_summarizer.cpp
+    intelligence/test_heuristic_llm_engine.cpp
+    translation/test_gated_translator.cpp
+    translation/test_dictionary_translator.cpp
+    storage/test_sodium_encryptor.cpp
+    storage/test_in_memory_key_provider.cpp
+    storage/test_meeting_serializer.cpp
+    storage/test_sqlite_meeting_repository.cpp
+    search/test_inverted_index_search.cpp
+)
+target_include_directories(meeting_sdk_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(meeting_sdk_tests PRIVATE
+    meeting_sdk::core
+    meeting_sdk::orchestration
+    meeting_sdk::audio
+    meeting_sdk::speech
+    meeting_sdk::speaker
+    meeting_sdk::intelligence
+    meeting_sdk::translation
+    meeting_sdk::storage
+    meeting_sdk::search
+    GTest::gtest_main
+    meeting_sdk_compiler_options
+)
+gtest_discover_tests(meeting_sdk_tests)
