@@ -10,7 +10,15 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(MEETING_SDK_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../meeting-sdk ${CMAKE_BINARY_DIR}/meeting-sdk)
 
-add_library(meeting_sdk_c SHARED src/meeting_sdk.cpp)
+# SHARED for the JVM/JNI host (dlopen'd at runtime); STATIC for Apple, where Kotlin/Native
+# links the C ABI straight into the framework binary. Defaults to SHARED so existing desktop
+# and Android consumers are unaffected.
+option(MEETING_SDK_C_SHARED "Build meeting_sdk_c as a shared library" ON)
+if(MEETING_SDK_C_SHARED)
+    add_library(meeting_sdk_c SHARED src/meeting_sdk.cpp)
+else()
+    add_library(meeting_sdk_c STATIC src/meeting_sdk.cpp)
+endif()
 add_library(meeting_sdk::c ALIAS meeting_sdk_c)
 
 target_include_directories(meeting_sdk_c PUBLIC
@@ -29,8 +37,11 @@ target_link_libraries(meeting_sdk_c PRIVATE
     meeting_sdk_compiler_options
 )
 
-add_executable(meeting_sdk_c_smoke_test test/smoke_test.cpp)
-target_link_libraries(meeting_sdk_c_smoke_test PRIVATE meeting_sdk::c)
+# The smoke test is a host executable — skip it when cross-compiling for a device we can't run on.
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(meeting_sdk_c_smoke_test test/smoke_test.cpp)
+    target_link_libraries(meeting_sdk_c_smoke_test PRIVATE meeting_sdk::c)
 
-enable_testing()
-add_test(NAME smoke_test COMMAND meeting_sdk_c_smoke_test)
+    enable_testing()
+    add_test(NAME smoke_test COMMAND meeting_sdk_c_smoke_test)
+endif()

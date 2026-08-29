@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
+
 plugins {
     kotlin("multiplatform") version "2.1.20"
     kotlin("plugin.serialization") version "2.1.20"
@@ -19,13 +21,27 @@ kotlin {
     // logic lives in commonMain; each platform supplies only the thin `actual` NativeBridge.
     jvm()
 
-    listOf(iosArm64(), iosSimulatorArm64(), iosX64()).forEach { target ->
+    // MeetingSdkKit.xcframework — the finished artifact an Xcode app imports. Each iOS target's
+    // framework binary statically links ../ios/native/<sdk>/libMeetingSdkNative.a (the whole C++
+    // core + C ABI + sqlite3 + libsodium, cross-compiled by ios/scripts/build-native.sh), so the
+    // framework is self-contained and the app needs no CMake step of its own.
+    val xcf = XCFramework("MeetingSdkKit")
+    listOf(iosArm64(), iosSimulatorArm64()).forEach { target ->
+        val nativeSdk = if (target.name == "iosArm64") "iphoneos" else "iphonesimulator"
         target.compilations.getByName("main").cinterops.create("meeting_sdk_c") {
             definitionFile.set(project.file("src/nativeInterop/cinterop/meeting_sdk_c.def"))
             includeDirs(project.file("../bindings/c/include"))
         }
-        // The meeting_sdk_c static library is linked by the consuming Xcode project (the same way
-        // the Android app links the JNI .so), so no staticLibrary is wired in here.
+        target.binaries.framework {
+            baseName = "MeetingSdkKit"
+            isStatic = false
+            linkerOpts(
+                "-L${project.file("../ios/native/$nativeSdk").absolutePath}",
+                "-lMeetingSdkNative",
+                "-lc++",
+            )
+            xcf.add(this)
+        }
     }
 
     sourceSets {

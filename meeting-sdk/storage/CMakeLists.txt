@@ -1,9 +1,9 @@
 # Desktop links the system sqlite3/libsodium (present on macOS/Linux already, or via Homebrew —
-# see README §Prerequisites). Neither ships in the Android NDK sysroot (no sqlite3.h/libsodium
-# stub there at all, on any API level), so the Android build instead fetches and compiles real
-# source for both — not a stub, the same libraries, just built from source instead of found on
-# the host.
-if(ANDROID)
+# see README §Prerequisites). Neither is usable straight from a cross-compile sysroot — the
+# Android NDK ships no sqlite3.h/libsodium at all, and the iOS SDK's libsqlite3 can't be relied
+# on across arches/simulator — so those builds fetch and compile real source for both. Not a
+# stub: the same libraries, just built from source instead of found on the host.
+if(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
     # sqlite3.c/libsodium are C sources; the top-level project() only enables CXX (no first-party
     # code here is C), so C must be turned on explicitly before compiling them.
     enable_language(C)
