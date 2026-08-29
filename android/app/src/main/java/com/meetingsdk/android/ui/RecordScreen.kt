@@ -1,9 +1,14 @@
 package com.meetingsdk.android.ui
 
 import android.Manifest
+import android.app.Activity
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.app.ActivityCompat
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,15 +38,32 @@ fun RecordScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val activity = context as? Activity
     var hasRecordAudioPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
                 PackageManager.PERMISSION_GRANTED,
         )
     }
+    var permissionRefused by remember { mutableStateOf(false) }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { granted -> hasRecordAudioPermission = granted }
+    ) { granted ->
+        hasRecordAudioPermission = granted
+        permissionRefused = !granted
+        // Asking is only ever a step toward recording, so start straight away once allowed.
+        if (granted) onStartLiveRecording()
+    }
+
+    // Tapping "Start recording" asks for the mic itself — no separate "grant" step — and the
+    // launcher callback above resumes the start once permission is given.
+    fun onStartRecordingClicked() {
+        if (hasRecordAudioPermission) {
+            onStartLiveRecording()
+        } else {
+            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
 
     Column(
         modifier = modifier.fillMaxSize().padding(24.dp),
@@ -60,11 +82,7 @@ fun RecordScreen(
                 "SDK, so this is a crude but genuine voiceprint, not a fabricated one.",
             style = MaterialTheme.typography.bodyMedium,
         )
-        if (!hasRecordAudioPermission) {
-            Button(onClick = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }) {
-                Text("Grant microphone permission")
-            }
-        } else if (state.isLiveRecording) {
+        if (state.isLiveRecording) {
             Button(onClick = onStopLiveRecording) { Text("Stop recording") }
             Text("Listening… ${state.liveUtteranceCount} utterance(s) captured")
             if (state.livePartialText.isNotBlank()) {
@@ -79,7 +97,36 @@ fun RecordScreen(
                 )
             }
         } else {
-            Button(onClick = onStartLiveRecording) { Text("Start recording") }
+            Button(onClick = ::onStartRecordingClicked) { Text("Start recording") }
+            if (permissionRefused && !hasRecordAudioPermission) {
+                // Once the OS stops showing the dialog (rationale suppressed), the only way
+                // back is the app's system settings page.
+                val blockedForGood = activity != null &&
+                    !ActivityCompat.shouldShowRequestPermissionRationale(
+                        activity, Manifest.permission.RECORD_AUDIO,
+                    )
+                if (blockedForGood) {
+                    Text(
+                        "Microphone access is turned off for this app. Enable it in Settings to record.",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Button(onClick = {
+                        context.startActivity(
+                            Intent(
+                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.fromParts("package", context.packageName, null),
+                            ),
+                        )
+                    }) {
+                        Text("Open settings")
+                    }
+                } else {
+                    Text(
+                        "Microphone permission is needed to record live speech.",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
         }
         if (state.liveUnavailable) {
             Text(
