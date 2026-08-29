@@ -157,7 +157,14 @@ core::Result<core::Meeting> MeetingPipeline::stop() {
     meeting_.topics = topics.value();
     meeting_.questions = questions.value();
 
-    auto saved = deps_.repository.save(meeting_);
+    // Persist with the state the meeting will actually end up in, not the transient Processing
+    // state — otherwise the row on disk stays stuck at Processing forever even though the
+    // in-memory result correctly reports Completed. Save a Completed copy speculatively and only
+    // commit it to meeting_ once the save has actually succeeded.
+    core::Meeting completed = meeting_;
+    completed.state = core::MeetingState::Completed;
+
+    auto saved = deps_.repository.save(completed);
     if (!saved) {
         std::ignore = stateMachine_.transitionTo(core::MeetingState::Failed);  // always legal from Processing
         meeting_.state = core::MeetingState::Failed;
@@ -165,8 +172,45 @@ core::Result<core::Meeting> MeetingPipeline::stop() {
     }
 
     std::ignore = stateMachine_.transitionTo(core::MeetingState::Completed);  // always legal from Processing
-    meeting_.state = core::MeetingState::Completed;
+    meeting_ = std::move(completed);
     return meeting_;
+}
+
+core::Result<void> MeetingPipeline::ingestTranscribedSegment(std::string text, core::TimeRange range,
+                                                               core::SpeakerId speaker, float confidence) {
+    if (fatalError_) {
+        return *fatalError_;
+    }
+    if (stateMachine_.current() != core::MeetingState::Recording) {
+        return core::Error{
+            .category = core::ErrorCategory::Configuration,
+            .code = "orchestration.not_recording",
+            .message = "ingestTranscribedSegment requires Recording state",
+        };
+    }
+    if (text.empty()) {
+        return {};  // no-op, matches TranscriptAssembler::addSegment's own convention
+    }
+
+    registerSpeaker(speaker);
+
+    core::TranscriptSegment segment;
+    segment.id = core::SegmentId{"utt-" + std::to_string(++utteranceCounter_)};
+    segment.range = range;
+    segment.speaker = std::move(speaker);
+    segment.text = std::move(text);
+    segment.confidence = confidence;
+
+    auto languages = deps_.languageDetector.detect(segment);
+    if (!languages) {
+        fail(languages.error());
+        return languages.error();
+    }
+    applyLanguageDetection(segment, languages.value());
+
+    assembler_.addSegment(std::move(segment));
+    meeting_.transcript = assembler_.assemble();
+    return {};
 }
 
 core::Result<std::string> MeetingPipeline::translateSegment(const core::SegmentId& segmentId,
@@ -273,7 +317,9 @@ void MeetingPipeline::registerSpeaker(const core::SpeakerId& id) {
     const bool exists = std::any_of(meeting_.speakers.begin(), meeting_.speakers.end(),
                                      [&](const core::Speaker& speaker) { return speaker.id == id; });
     if (!exists) {
-        meeting_.speakers.push_back(core::Speaker{.id = id});
+        core::Speaker speaker;
+        speaker.id = id;
+        meeting_.speakers.push_back(std::move(speaker));
     }
 }
 

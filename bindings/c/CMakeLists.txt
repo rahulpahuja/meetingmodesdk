@@ -18,8 +18,14 @@ target_include_directories(meeting_sdk_c PUBLIC
 )
 target_link_libraries(meeting_sdk_c PRIVATE
     meeting_sdk::core
+    meeting_sdk::audio
+    meeting_sdk::speech
+    meeting_sdk::intelligence
+    meeting_sdk::search
+    meeting_sdk::speaker
     meeting_sdk::storage
     meeting_sdk::translation
+    meeting_sdk::orchestration
     meeting_sdk_compiler_options
 )
 

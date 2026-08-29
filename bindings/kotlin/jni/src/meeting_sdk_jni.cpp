@@ -89,4 +89,107 @@ JNIEXPORT jboolean JNICALL Java_com_meetingsdk_jvm_NativeBridge_repositoryRemove
     return status == MSDK_OK ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jboolean JNICALL Java_com_meetingsdk_jvm_NativeBridge_repositoryRunDemoMeeting(
+    JNIEnv* env, jobject /*thiz*/, jlong handle, jstring meetingId) {
+    const char* idChars = env->GetStringUTFChars(meetingId, nullptr);
+    const int32_t status =
+        msdk_repository_run_demo_meeting(reinterpret_cast<msdk_repository*>(handle), idChars);
+    env->ReleaseStringUTFChars(meetingId, idChars);
+    return status == MSDK_OK ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jstring JNICALL Java_com_meetingsdk_jvm_NativeBridge_repositorySearchJson(
+    JNIEnv* env, jobject /*thiz*/, jlong handle, jstring queryText) {
+    const char* queryChars = env->GetStringUTFChars(queryText, nullptr);
+    char* json = nullptr;
+    const int32_t status =
+        msdk_repository_search_json(reinterpret_cast<msdk_repository*>(handle), queryChars, &json);
+    env->ReleaseStringUTFChars(queryText, queryChars);
+    if (status != MSDK_OK) {
+        return nullptr;
+    }
+    jstring result = env->NewStringUTF(json);
+    msdk_free_string(json);
+    return result;
+}
+
+JNIEXPORT jlong JNICALL Java_com_meetingsdk_jvm_NativeBridge_pipelineCreate(JNIEnv* env, jobject /*thiz*/,
+                                                                              jlong repositoryHandle,
+                                                                              jstring meetingId) {
+    const char* idChars = env->GetStringUTFChars(meetingId, nullptr);
+    msdk_pipeline* handle = nullptr;
+    const int32_t status = msdk_pipeline_create(reinterpret_cast<msdk_repository*>(repositoryHandle),
+                                                 idChars, &handle);
+    env->ReleaseStringUTFChars(meetingId, idChars);
+    return status == MSDK_OK ? reinterpret_cast<jlong>(handle) : 0;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_meetingsdk_jvm_NativeBridge_pipelineStart(JNIEnv* /*env*/,
+                                                                                jobject /*thiz*/,
+                                                                                jlong handle) {
+    return msdk_pipeline_start(reinterpret_cast<msdk_pipeline*>(handle)) == MSDK_OK ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_meetingsdk_jvm_NativeBridge_pipelineIngestUtterance(
+    JNIEnv* env, jobject /*thiz*/, jlong handle, jstring text, jlong startMs, jlong endMs,
+    jstring speakerId, jfloat confidence) {
+    const char* textChars = env->GetStringUTFChars(text, nullptr);
+    const char* speakerChars = env->GetStringUTFChars(speakerId, nullptr);
+    const int32_t status =
+        msdk_pipeline_ingest_utterance(reinterpret_cast<msdk_pipeline*>(handle), textChars, startMs, endMs,
+                                        speakerChars, confidence);
+    env->ReleaseStringUTFChars(text, textChars);
+    env->ReleaseStringUTFChars(speakerId, speakerChars);
+    return status == MSDK_OK ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jstring JNICALL Java_com_meetingsdk_jvm_NativeBridge_pipelineStop(JNIEnv* env, jobject /*thiz*/,
+                                                                              jlong handle) {
+    char* json = nullptr;
+    const int32_t status = msdk_pipeline_stop(reinterpret_cast<msdk_pipeline*>(handle), &json);
+    if (status != MSDK_OK) {
+        return nullptr;
+    }
+    jstring result = env->NewStringUTF(json);
+    msdk_free_string(json);
+    return result;
+}
+
+JNIEXPORT void JNICALL Java_com_meetingsdk_jvm_NativeBridge_pipelineDestroy(JNIEnv* /*env*/,
+                                                                              jobject /*thiz*/, jlong handle) {
+    msdk_pipeline_destroy(reinterpret_cast<msdk_pipeline*>(handle));
+}
+
+JNIEXPORT jlong JNICALL Java_com_meetingsdk_jvm_NativeBridge_diarizerCreate(JNIEnv* /*env*/,
+                                                                              jobject /*thiz*/,
+                                                                              jfloat similarityThreshold) {
+    msdk_diarizer* handle = nullptr;
+    const int32_t status = msdk_diarizer_create(similarityThreshold, &handle);
+    return status == MSDK_OK ? reinterpret_cast<jlong>(handle) : 0;
+}
+
+JNIEXPORT jstring JNICALL Java_com_meetingsdk_jvm_NativeBridge_diarizerAssign(JNIEnv* env, jobject /*thiz*/,
+                                                                                jlong handle,
+                                                                                jfloatArray embedding) {
+    jsize length = env->GetArrayLength(embedding);
+    jfloat* elements = env->GetFloatArrayElements(embedding, nullptr);
+
+    char* speakerId = nullptr;
+    const int32_t status = msdk_diarizer_assign(reinterpret_cast<msdk_diarizer*>(handle), elements, length,
+                                                 &speakerId);
+    env->ReleaseFloatArrayElements(embedding, elements, JNI_ABORT);
+
+    if (status != MSDK_OK) {
+        return nullptr;
+    }
+    jstring result = env->NewStringUTF(speakerId);
+    msdk_free_string(speakerId);
+    return result;
+}
+
+JNIEXPORT void JNICALL Java_com_meetingsdk_jvm_NativeBridge_diarizerDestroy(JNIEnv* /*env*/,
+                                                                              jobject /*thiz*/, jlong handle) {
+    msdk_diarizer_destroy(reinterpret_cast<msdk_diarizer*>(handle));
+}
+
 }  // extern "C"

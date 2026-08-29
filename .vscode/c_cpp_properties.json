@@ -1,0 +1,22 @@
+{
+  "version": 4,
+  "configurations": [
+    {
+      "name": "Mac",
+      "compileCommands": [
+        "${workspaceFolder}/meeting-sdk/build/compile_commands.json",
+        "${workspaceFolder}/bindings/c/build/compile_commands.json",
+        "${workspaceFolder}/bindings/kotlin/jni/build/compile_commands.json"
+      ],
+      "includePath": [
+        "${workspaceFolder}/**",
+        "/opt/homebrew/opt/libsodium/include",
+        "/opt/homebrew/include"
+      ],
+      "compilerPath": "/usr/bin/clang++",
+      "cStandard": "c17",
+      "cppStandard": "c++20",
+      "intelliSenseMode": "macos-clang-arm64"
+    }
+  ]
+}

@@ -66,4 +66,35 @@ class NativeBridgeIntegrationTest {
             repo.close()
         }
     }
+
+    @Test
+    fun runDemoMeetingPersistsTranscriptAndIntelligence() {
+        val repo = JvmMeetingRepository(":memory:")
+        try {
+            assertTrue(repo.runDemoMeeting("demo1"))
+
+            val meeting = repo.getMeeting("demo1")
+            assertEquals(MeetingState.COMPLETED, meeting?.state)
+            assertEquals(1, meeting?.transcript?.size)
+            assertTrue(meeting?.summary != null)
+            assertTrue(meeting?.decisions?.isNotEmpty() == true)
+            assertTrue(meeting?.actionItems?.isNotEmpty() == true)
+        } finally {
+            repo.close()
+        }
+    }
+
+    @Test
+    fun searchFindsAKeywordAcrossSavedMeetings() {
+        val repo = JvmMeetingRepository(":memory:")
+        val search = JvmSearchService(repo)
+        try {
+            repo.saveSimpleMeeting("m1", "let's discuss the launch plan")
+            val results = search.search("launch")
+            assertEquals(1, results.size)
+            assertEquals("m1", results[0].meetingId)
+        } finally {
+            repo.close()
+        }
+    }
 }

@@ -1,9 +1,38 @@
-find_library(SQLITE3_LIBRARY sqlite3 REQUIRED)
+# Desktop links the system sqlite3/libsodium (present on macOS/Linux already, or via Homebrew —
+# see README §Prerequisites). Neither ships in the Android NDK sysroot (no sqlite3.h/libsodium
+# stub there at all, on any API level), so the Android build instead fetches and compiles real
+# source for both — not a stub, the same libraries, just built from source instead of found on
+# the host.
+if(ANDROID)
+    # sqlite3.c/libsodium are C sources; the top-level project() only enables CXX (no first-party
+    # code here is C), so C must be turned on explicitly before compiling them.
+    enable_language(C)
+    include(FetchContent)
 
-find_path(SODIUM_INCLUDE_DIR sodium.h HINTS /opt/homebrew/opt/libsodium/include /usr/local/opt/libsodium/include)
-find_library(SODIUM_LIBRARY sodium HINTS /opt/homebrew/opt/libsodium/lib /usr/local/opt/libsodium/lib)
-if(NOT SODIUM_INCLUDE_DIR OR NOT SODIUM_LIBRARY)
-    message(FATAL_ERROR "libsodium not found — install it (e.g. 'brew install libsodium' on macOS).")
+    FetchContent_Declare(sqlite3_amalgamation
+        URL https://www.sqlite.org/2025/sqlite-amalgamation-3500100.zip
+    )
+    FetchContent_MakeAvailable(sqlite3_amalgamation)
+    add_library(meeting_sdk_sqlite3 STATIC ${sqlite3_amalgamation_SOURCE_DIR}/sqlite3.c)
+    target_include_directories(meeting_sdk_sqlite3 PUBLIC ${sqlite3_amalgamation_SOURCE_DIR})
+    set(SQLITE3_LIBRARY meeting_sdk_sqlite3)
+
+    set(SODIUM_DISABLE_TESTS ON CACHE BOOL "" FORCE)
+    FetchContent_Declare(libsodium_cmake
+        GIT_REPOSITORY https://github.com/robinlinden/libsodium-cmake.git
+        GIT_TAG master
+    )
+    FetchContent_MakeAvailable(libsodium_cmake)
+    set(SODIUM_LIBRARY sodium)
+    set(SODIUM_INCLUDE_DIR "")  # sodium target already exports its own public include dir
+else()
+    find_library(SQLITE3_LIBRARY sqlite3 REQUIRED)
+
+    find_path(SODIUM_INCLUDE_DIR sodium.h HINTS /opt/homebrew/opt/libsodium/include /usr/local/opt/libsodium/include)
+    find_library(SODIUM_LIBRARY sodium HINTS /opt/homebrew/opt/libsodium/lib /usr/local/opt/libsodium/lib)
+    if(NOT SODIUM_INCLUDE_DIR OR NOT SODIUM_LIBRARY)
+        message(FATAL_ERROR "libsodium not found — install it (e.g. 'brew install libsodium' on macOS).")
+    endif()
 endif()
 
 add_library(meeting_sdk_storage STATIC

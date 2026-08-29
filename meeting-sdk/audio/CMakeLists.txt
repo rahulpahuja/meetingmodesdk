@@ -2,6 +2,7 @@ add_library(meeting_sdk_audio STATIC
     src/preprocessor.cpp
     src/energy_vad.cpp
     src/synthetic_audio_source.cpp
+    src/null_audio_source.cpp
 )
 add_library(meeting_sdk::audio ALIAS meeting_sdk_audio)
 

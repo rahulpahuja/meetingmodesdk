@@ -1,13 +1,11 @@
 package com.meetingsdk.model
 
 /**
- * Platform-neutral domain models exposed by the KMP API — no native types (pointers, JNI
- * handles) ever appear here; native bindings (jvmMain, androidMain, iosMain later) translate at
- * the boundary. Mirrors a subset of meeting_sdk::core (see
- * ../../../../../../docs/architecture/02-interfaces-and-data-models.md): only the fields the
- * C API (bindings/c) actually exposes today. Speakers are not wired through the C API yet —
- * they'd extend this model the same way summary/actionItems/decisions/topics/questions did, not
- * by changing its shape.
+ * Platform-neutral domain models mirroring meeting_sdk::core — see
+ * kmp/src/commonMain/kotlin/com/meetingsdk/model/Models.kt, which this is a copy of. Duplicated
+ * here rather than depended on because kmp's build.gradle.kts scopes androidTarget() to
+ * Milestone 9 (Android capture/permissions/lifecycle work not yet in scope); this app is its own
+ * standalone consumer of the C API until that KMP target exists.
  */
 
 enum class MeetingState { IDLE, RECORDING, PAUSED, PROCESSING, COMPLETED, FAILED }

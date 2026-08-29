@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -66,6 +67,19 @@ public:
     // Dependencies::repository, and returns it.
     core::Result<core::Meeting> stop();
 
+    // Adds one already-transcribed utterance directly to the transcript, for STT sources that
+    // capture and transcribe as one atomic step and can only hand back recognized text — not raw
+    // AudioFrames — e.g. a platform speech service like Android's SpeechRecognizer, which owns
+    // its own microphone capture. Requires Recording (started with audio::NullAudioSource or
+    // equivalent, since this bypasses the frame-driven audioSource/vad/segmenter/sttEngine chain
+    // entirely). Runs real language detection on the text via Dependencies::languageDetector, but
+    // not diarization: ISpeakerDiarizer needs raw AudioFrames this path never has, and fabricating
+    // fake frames just to satisfy it would be worse than the caller supplying the speaker
+    // directly, so `speaker` is taken as given. No-op if text is empty, matching
+    // TranscriptAssembler::addSegment's own convention.
+    core::Result<void> ingestTranscribedSegment(std::string text, core::TimeRange range,
+                                                 core::SpeakerId speaker, float confidence);
+
     // On-demand translation of one already-assembled transcript segment; independent of the
     // automatic stages above (see 05-diagrams.md §3's "Translation enabled?" branch — gating is
     // Dependencies::translator's own concern, e.g. a translation::GatedTranslator constructed
@@ -92,6 +106,7 @@ private:
     speech::Segmenter segmenter_;
     core::TranscriptionOptions sttOptions_;
     std::optional<core::Error> fatalError_;
+    std::uint64_t utteranceCounter_ = 0;
 };
 
 }  // namespace meeting_sdk::orchestration

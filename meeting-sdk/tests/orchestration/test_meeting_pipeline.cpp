@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "meeting_sdk/audio/null_audio_source.hpp"
 #include "meeting_sdk/audio/synthetic_audio_source.hpp"
 #include "meeting_sdk/intelligence/heuristic_llm_engine.hpp"
 #include "meeting_sdk/speech/heuristic_language_detector.hpp"
@@ -182,6 +183,10 @@ TEST(MeetingPipeline, StopRunsIntelligenceExtractionAndPersists) {
     auto fetched = fx.repository->get(core::MeetingId{"m1"});
     ASSERT_TRUE(fetched);
     EXPECT_EQ(fetched.value().transcript.size(), 1U);
+    // Regression: stop() used to persist while meeting_.state was still Processing, so the
+    // round-tripped fetch stayed stuck at Processing even though stop()'s own return value
+    // correctly reported Completed.
+    EXPECT_EQ(fetched.value().state, core::MeetingState::Completed);
 }
 
 TEST(MeetingPipeline, PauseThenResumeReturnsToRecording) {
@@ -228,6 +233,41 @@ TEST(MeetingPipeline, TranslateSegmentWithoutConfiguredTranslatorIsRejected) {
     auto result = pipeline.translateSegment(pipeline.snapshot().transcript[0].id, "hi");
     ASSERT_FALSE(result);
     EXPECT_EQ(result.error().code, "orchestration.translation_not_configured");
+}
+
+TEST(MeetingPipeline, IngestTranscribedSegmentAddsToTranscriptDuringRecording) {
+    Fixture fx;
+    audio::NullAudioSource nullSource;
+    MeetingPipeline pipeline(core::MeetingId{"m1"}, fx.deps(nullSource));
+    ASSERT_TRUE(pipeline.start());
+
+    auto result = pipeline.ingestTranscribedSegment("namaste, kaise hain aap", core::TimeRange{ts(0), ts(1000)},
+                                                       core::SpeakerId{"you"}, 0.95F);
+    ASSERT_TRUE(result);
+
+    const auto& meeting = pipeline.snapshot();
+    ASSERT_EQ(meeting.transcript.size(), 1U);
+    EXPECT_EQ(meeting.transcript[0].text, "namaste, kaise hain aap");
+    EXPECT_EQ(meeting.transcript[0].speaker, core::SpeakerId{"you"});
+    ASSERT_EQ(meeting.speakers.size(), 1U);
+    EXPECT_EQ(meeting.speakers[0].id, core::SpeakerId{"you"});
+
+    auto stopped = pipeline.stop();
+    ASSERT_TRUE(stopped);
+    EXPECT_EQ(stopped.value().state, core::MeetingState::Completed);
+    ASSERT_TRUE(stopped.value().summary.has_value());
+}
+
+TEST(MeetingPipeline, IngestTranscribedSegmentBeforeStartIsRejected) {
+    Fixture fx;
+    audio::NullAudioSource nullSource;
+    MeetingPipeline pipeline(core::MeetingId{"m1"}, fx.deps(nullSource));
+
+    auto result = pipeline.ingestTranscribedSegment("hello", core::TimeRange{ts(0), ts(1000)},
+                                                       core::SpeakerId{"you"}, 0.9F);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error().code, "orchestration.not_recording");
+    EXPECT_TRUE(pipeline.snapshot().transcript.empty());
 }
 
 TEST(MeetingPipeline, TranslateSegmentUsesConfiguredTranslator) {

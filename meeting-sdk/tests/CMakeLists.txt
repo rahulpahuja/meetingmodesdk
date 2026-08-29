@@ -10,6 +10,7 @@ add_executable(meeting_sdk_tests
     audio/test_preprocessor.cpp
     audio/test_energy_vad.cpp
     audio/test_synthetic_audio_source.cpp
+    audio/test_null_audio_source.cpp
     speech/test_segmenter.cpp
     speech/test_streaming_stt_session.cpp
     speech/test_heuristic_language_detector.cpp
