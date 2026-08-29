@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cpp-core:
+    name: C++ core (ctest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y libsodium-dev libsqlite3-dev ninja-build
+      - name: Configure
+        run: cmake -S meeting-sdk -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: C ABI smoke test (bindings/c)
+        run: |
+          cmake -S bindings/c -B build-c -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build-c -j
+          ctest --test-dir build-c --output-on-failure
+
+  cpp-sanitizers:
+    name: C++ core (ASan + UBSan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y libsodium-dev libsqlite3-dev ninja-build
+      - name: Configure
+        run: cmake -S meeting-sdk -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DMEETING_SDK_ENABLE_ASAN=ON
+      - name: Build
+        run: cmake --build build-asan -j
+      - name: Test
+        run: ctest --test-dir build-asan --output-on-failure
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+
+  kmp-jvm:
+    name: KMP jvmTest (Kotlin -> JNI -> C ABI -> core)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y libsodium-dev libsqlite3-dev
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.7.1"
+      - name: Build JNI shared library
+        run: |
+          cmake -S bindings/kotlin/jni -B bindings/kotlin/jni/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build bindings/kotlin/jni/build -j
+      - name: jvmTest
+        working-directory: kmp
+        run: gradle jvmTest --no-daemon
+
+  android:
+    name: Android :app:assembleDebug
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - name: Install NDK + CMake
+        run: sdkmanager "ndk;28.2.13676358" "cmake;3.22.1"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.7.1"
+      - name: assembleDebug
+        working-directory: android
+        run: gradle :app:assembleDebug --no-daemon
+
+  ios:
+    name: iOS xcframework + app build
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.7.1"
+      - name: Install xcodegen
+        run: brew install xcodegen
+      - name: Cross-compile native core for iOS
+        run: ./ios/scripts/build-native.sh
+      - name: Assemble MeetingSdkKit.xcframework
+        working-directory: kmp
+        run: gradle assembleMeetingSdkKitReleaseXCFramework --no-daemon
+      - name: Generate + build the app
+        working-directory: ios
+        run: |
+          xcodegen generate
+          xcodebuild -project MeetingSDKDemo.xcodeproj -scheme MeetingSDKDemo \
+            -configuration Debug -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' build

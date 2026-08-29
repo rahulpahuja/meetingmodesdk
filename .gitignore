@@ -13,3 +13,7 @@ ios/native/
 ios/build/
 xcuserdata/
 DerivedData/
+
+# extra CMake build trees
+build-*/
+*/build/

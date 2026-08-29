@@ -3,8 +3,10 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <memory>
 #include <sstream>
+#include <utility>
 
 #include "meeting_sdk/audio/null_audio_source.hpp"
 #include "meeting_sdk/audio/synthetic_audio_source.hpp"
@@ -22,6 +24,30 @@
 #include "meeting_sdk/translation/gated_translator.hpp"
 
 namespace {
+
+// Every extern "C" entry point runs its body through one of these guards so that no C++
+// exception can cross the ABI boundary (that would be undefined behaviour). The core is
+// designed to report failure via Result<T> without throwing; a caught exception here means
+// something unforeseen (typically std::bad_alloc) and is reported as MSDK_ERROR_INTERNAL for
+// the int32_t-returning functions, or simply swallowed for the void destructors (which only
+// run noexcept member destructors, but are wrapped for total safety).
+template <class Fn>
+int32_t guarded(Fn&& fn) noexcept {
+    try {
+        return std::forward<Fn>(fn)();
+    } catch (...) {
+        return MSDK_ERROR_INTERNAL;
+    }
+}
+
+template <class Fn>
+void guardedVoid(Fn&& fn) noexcept {
+    try {
+        std::forward<Fn>(fn)();
+    } catch (...) {
+        // Nothing to report through a void return; the process stays alive.
+    }
+}
 
 char* newCString(const std::string& s) {
     auto* out = new char[s.size() + 1];
@@ -220,134 +246,150 @@ struct msdk_repository {
 };
 
 int32_t msdk_translate(const char* text, const char* target_bcp47, char** out_result) {
-    if (text == nullptr || target_bcp47 == nullptr || out_result == nullptr) {
-        return MSDK_ERROR_INVALID_ARGUMENT;
-    }
-    meeting_sdk::translation::DictionaryTranslator dictionary;
-    meeting_sdk::translation::GatedTranslator gated(meeting_sdk::core::ProviderMode::OnDevice, &dictionary);
-    auto result = gated.translate(text, target_bcp47);
-    if (!result) {
-        return MSDK_ERROR_TRANSLATION_FAILED;
-    }
-    *out_result = newCString(result.value());
-    return MSDK_OK;
+    return guarded([&]() -> int32_t {
+        if (text == nullptr || target_bcp47 == nullptr || out_result == nullptr) {
+            return MSDK_ERROR_INVALID_ARGUMENT;
+        }
+        meeting_sdk::translation::DictionaryTranslator dictionary;
+        meeting_sdk::translation::GatedTranslator gated(meeting_sdk::core::ProviderMode::OnDevice,
+                                                        &dictionary);
+        auto result = gated.translate(text, target_bcp47);
+        if (!result) {
+            return MSDK_ERROR_TRANSLATION_FAILED;
+        }
+        *out_result = newCString(result.value());
+        return MSDK_OK;
+    });
 }
 
-void msdk_free_string(char* s) { delete[] s; }
+void msdk_free_string(char* s) { guardedVoid([&] { delete[] s; }); }
 
 int32_t msdk_repository_open(const char* db_path, msdk_repository** out_handle) {
-    if (db_path == nullptr || out_handle == nullptr) {
-        return MSDK_ERROR_INVALID_ARGUMENT;
-    }
-    auto handle = std::make_unique<msdk_repository>();
-    auto opened =
-        meeting_sdk::storage::SqliteMeetingRepository::open(db_path, handle->encryptor, handle->keyProvider);
-    if (!opened) {
-        return MSDK_ERROR_STORAGE_FAILED;
-    }
-    handle->repository = std::move(opened.value());
-    *out_handle = handle.release();
-    return MSDK_OK;
+    return guarded([&]() -> int32_t {
+        if (db_path == nullptr || out_handle == nullptr) {
+            return MSDK_ERROR_INVALID_ARGUMENT;
+        }
+        auto handle = std::make_unique<msdk_repository>();
+        auto opened = meeting_sdk::storage::SqliteMeetingRepository::open(db_path, handle->encryptor,
+                                                                         handle->keyProvider);
+        if (!opened) {
+            return MSDK_ERROR_STORAGE_FAILED;
+        }
+        handle->repository = std::move(opened.value());
+        *out_handle = handle.release();
+        return MSDK_OK;
+    });
 }
 
-void msdk_repository_close(msdk_repository* handle) { delete handle; }
+void msdk_repository_close(msdk_repository* handle) { guardedVoid([&] { delete handle; }); }
 
 int32_t msdk_repository_save_simple_meeting(msdk_repository* handle, const char* meeting_id,
                                              const char* text) {
-    if (handle == nullptr || meeting_id == nullptr || text == nullptr) {
-        return MSDK_ERROR_INVALID_ARGUMENT;
-    }
-    meeting_sdk::core::Meeting meeting;
-    meeting.id = meeting_sdk::core::MeetingId{meeting_id};
-    meeting.state = meeting_sdk::core::MeetingState::Completed;
-    const meeting_sdk::core::Timestamp now{std::chrono::system_clock::now()};
-    meeting.range = meeting_sdk::core::TimeRange{now, now};
+    return guarded([&]() -> int32_t {
+        if (handle == nullptr || meeting_id == nullptr || text == nullptr) {
+            return MSDK_ERROR_INVALID_ARGUMENT;
+        }
+        meeting_sdk::core::Meeting meeting;
+        meeting.id = meeting_sdk::core::MeetingId{meeting_id};
+        meeting.state = meeting_sdk::core::MeetingState::Completed;
+        const meeting_sdk::core::Timestamp now{std::chrono::system_clock::now()};
+        meeting.range = meeting_sdk::core::TimeRange{now, now};
 
-    meeting_sdk::core::TranscriptSegment segment;
-    segment.id = meeting_sdk::core::SegmentId{std::string(meeting_id) + "-seg1"};
-    segment.range = meeting.range;
-    segment.text = text;
-    meeting.transcript = {segment};
+        meeting_sdk::core::TranscriptSegment segment;
+        segment.id = meeting_sdk::core::SegmentId{std::string(meeting_id) + "-seg1"};
+        segment.range = meeting.range;
+        segment.text = text;
+        meeting.transcript = {segment};
 
-    return handle->repository->save(meeting) ? MSDK_OK : MSDK_ERROR_STORAGE_FAILED;
+        return handle->repository->save(meeting) ? MSDK_OK : MSDK_ERROR_STORAGE_FAILED;
+    });
 }
 
 int32_t msdk_repository_get_meeting_json(msdk_repository* handle, const char* meeting_id,
                                           char** out_json) {
-    if (handle == nullptr || meeting_id == nullptr || out_json == nullptr) {
-        return MSDK_ERROR_INVALID_ARGUMENT;
-    }
-    auto result = handle->repository->get(meeting_sdk::core::MeetingId{meeting_id});
-    if (!result) {
-        return MSDK_ERROR_NOT_FOUND;
-    }
-    *out_json = newCString(meetingToJson(result.value()));
-    return MSDK_OK;
+    return guarded([&]() -> int32_t {
+        if (handle == nullptr || meeting_id == nullptr || out_json == nullptr) {
+            return MSDK_ERROR_INVALID_ARGUMENT;
+        }
+        auto result = handle->repository->get(meeting_sdk::core::MeetingId{meeting_id});
+        if (!result) {
+            return MSDK_ERROR_NOT_FOUND;
+        }
+        *out_json = newCString(meetingToJson(result.value()));
+        return MSDK_OK;
+    });
 }
 
 int32_t msdk_repository_list_meeting_ids_json(msdk_repository* handle, char** out_json) {
-    if (handle == nullptr || out_json == nullptr) {
-        return MSDK_ERROR_INVALID_ARGUMENT;
-    }
-    auto result = handle->repository->listAll();
-    if (!result) {
-        return MSDK_ERROR_STORAGE_FAILED;
-    }
-    std::ostringstream os;
-    os << "[";
-    for (std::size_t i = 0; i < result.value().size(); ++i) {
-        if (i > 0) {
-            os << ",";
+    return guarded([&]() -> int32_t {
+        if (handle == nullptr || out_json == nullptr) {
+            return MSDK_ERROR_INVALID_ARGUMENT;
         }
-        os << "\"" << escapeJson(result.value()[i].value) << "\"";
-    }
-    os << "]";
-    *out_json = newCString(os.str());
-    return MSDK_OK;
+        auto result = handle->repository->listAll();
+        if (!result) {
+            return MSDK_ERROR_STORAGE_FAILED;
+        }
+        std::ostringstream os;
+        os << "[";
+        for (std::size_t i = 0; i < result.value().size(); ++i) {
+            if (i > 0) {
+                os << ",";
+            }
+            os << "\"" << escapeJson(result.value()[i].value) << "\"";
+        }
+        os << "]";
+        *out_json = newCString(os.str());
+        return MSDK_OK;
+    });
 }
 
 int32_t msdk_repository_remove_meeting(msdk_repository* handle, const char* meeting_id) {
-    if (handle == nullptr || meeting_id == nullptr) {
-        return MSDK_ERROR_INVALID_ARGUMENT;
-    }
-    auto result = handle->repository->remove(meeting_sdk::core::MeetingId{meeting_id});
-    return result ? MSDK_OK : MSDK_ERROR_STORAGE_FAILED;
+    return guarded([&]() -> int32_t {
+        if (handle == nullptr || meeting_id == nullptr) {
+            return MSDK_ERROR_INVALID_ARGUMENT;
+        }
+        auto result = handle->repository->remove(meeting_sdk::core::MeetingId{meeting_id});
+        return result ? MSDK_OK : MSDK_ERROR_STORAGE_FAILED;
+    });
 }
 
 int32_t msdk_repository_run_demo_meeting(msdk_repository* handle, const char* meeting_id) {
-    if (handle == nullptr || meeting_id == nullptr) {
-        return MSDK_ERROR_INVALID_ARGUMENT;
-    }
+    return guarded([&]() -> int32_t {
+        if (handle == nullptr || meeting_id == nullptr) {
+            return MSDK_ERROR_INVALID_ARGUMENT;
+        }
 
-    auto source = meeting_sdk::audio::SyntheticAudioSource(std::vector<float>(960, 0.5F), 16000, 160);
-    DemoVad vad(5);
-    DemoSpeechToTextEngine sttEngine("We decided to launch the new design next month. I will send the "
-                                      "invite to the design team. Can we confirm the launch date?");
-    meeting_sdk::speech::HeuristicLanguageDetector languageDetector;
-    DemoDiarizer diarizer;
-    meeting_sdk::intelligence::HeuristicLlmEngine llmEngine;
-    SystemClock clock;
+        auto source = meeting_sdk::audio::SyntheticAudioSource(std::vector<float>(960, 0.5F), 16000, 160);
+        DemoVad vad(5);
+        DemoSpeechToTextEngine sttEngine(
+            "We decided to launch the new design next month. I will send the "
+            "invite to the design team. Can we confirm the launch date?");
+        meeting_sdk::speech::HeuristicLanguageDetector languageDetector;
+        DemoDiarizer diarizer;
+        meeting_sdk::intelligence::HeuristicLlmEngine llmEngine;
+        SystemClock clock;
 
-    meeting_sdk::orchestration::MeetingPipeline pipeline(
-        meeting_sdk::core::MeetingId{meeting_id},
-        meeting_sdk::orchestration::MeetingPipeline::Dependencies{
-            .audioSource = source,
-            .vad = vad,
-            .sttEngine = sttEngine,
-            .languageDetector = languageDetector,
-            .diarizer = diarizer,
-            .llmEngine = llmEngine,
-            .repository = *handle->repository,
-            .clock = clock,
-        });
+        meeting_sdk::orchestration::MeetingPipeline pipeline(
+            meeting_sdk::core::MeetingId{meeting_id},
+            meeting_sdk::orchestration::MeetingPipeline::Dependencies{
+                .audioSource = source,
+                .vad = vad,
+                .sttEngine = sttEngine,
+                .languageDetector = languageDetector,
+                .diarizer = diarizer,
+                .llmEngine = llmEngine,
+                .repository = *handle->repository,
+                .clock = clock,
+            });
 
-    if (!pipeline.start()) {
-        return MSDK_ERROR_PIPELINE_FAILED;
-    }
-    if (!pipeline.stop()) {
-        return MSDK_ERROR_PIPELINE_FAILED;
-    }
-    return MSDK_OK;
+        if (!pipeline.start()) {
+            return MSDK_ERROR_PIPELINE_FAILED;
+        }
+        if (!pipeline.stop()) {
+            return MSDK_ERROR_PIPELINE_FAILED;
+        }
+        return MSDK_OK;
+    });
 }
 
 struct msdk_pipeline {
@@ -379,44 +421,52 @@ struct msdk_pipeline {
 };
 
 int32_t msdk_pipeline_create(msdk_repository* repository, const char* meeting_id, msdk_pipeline** out_handle) {
-    if (repository == nullptr || meeting_id == nullptr || out_handle == nullptr) {
-        return MSDK_ERROR_INVALID_ARGUMENT;
-    }
-    *out_handle = new msdk_pipeline(meeting_sdk::core::MeetingId{meeting_id}, *repository->repository);
-    return MSDK_OK;
+    return guarded([&]() -> int32_t {
+        if (repository == nullptr || meeting_id == nullptr || out_handle == nullptr) {
+            return MSDK_ERROR_INVALID_ARGUMENT;
+        }
+        *out_handle = new msdk_pipeline(meeting_sdk::core::MeetingId{meeting_id}, *repository->repository);
+        return MSDK_OK;
+    });
 }
 
 int32_t msdk_pipeline_start(msdk_pipeline* handle) {
-    if (handle == nullptr) {
-        return MSDK_ERROR_INVALID_ARGUMENT;
-    }
-    return handle->pipeline.start() ? MSDK_OK : MSDK_ERROR_PIPELINE_FAILED;
+    return guarded([&]() -> int32_t {
+        if (handle == nullptr) {
+            return MSDK_ERROR_INVALID_ARGUMENT;
+        }
+        return handle->pipeline.start() ? MSDK_OK : MSDK_ERROR_PIPELINE_FAILED;
+    });
 }
 
 int32_t msdk_pipeline_ingest_utterance(msdk_pipeline* handle, const char* text, int64_t start_ms,
                                         int64_t end_ms, const char* speaker_id, float confidence) {
-    if (handle == nullptr || text == nullptr || speaker_id == nullptr) {
-        return MSDK_ERROR_INVALID_ARGUMENT;
-    }
-    auto result = handle->pipeline.ingestTranscribedSegment(
-        text, meeting_sdk::core::TimeRange{fromEpochMs(start_ms), fromEpochMs(end_ms)},
-        meeting_sdk::core::SpeakerId{speaker_id}, confidence);
-    return result ? MSDK_OK : MSDK_ERROR_PIPELINE_FAILED;
+    return guarded([&]() -> int32_t {
+        if (handle == nullptr || text == nullptr || speaker_id == nullptr) {
+            return MSDK_ERROR_INVALID_ARGUMENT;
+        }
+        auto result = handle->pipeline.ingestTranscribedSegment(
+            text, meeting_sdk::core::TimeRange{fromEpochMs(start_ms), fromEpochMs(end_ms)},
+            meeting_sdk::core::SpeakerId{speaker_id}, confidence);
+        return result ? MSDK_OK : MSDK_ERROR_PIPELINE_FAILED;
+    });
 }
 
 int32_t msdk_pipeline_stop(msdk_pipeline* handle, char** out_meeting_json) {
-    if (handle == nullptr || out_meeting_json == nullptr) {
-        return MSDK_ERROR_INVALID_ARGUMENT;
-    }
-    auto result = handle->pipeline.stop();
-    if (!result) {
-        return MSDK_ERROR_PIPELINE_FAILED;
-    }
-    *out_meeting_json = newCString(meetingToJson(result.value()));
-    return MSDK_OK;
+    return guarded([&]() -> int32_t {
+        if (handle == nullptr || out_meeting_json == nullptr) {
+            return MSDK_ERROR_INVALID_ARGUMENT;
+        }
+        auto result = handle->pipeline.stop();
+        if (!result) {
+            return MSDK_ERROR_PIPELINE_FAILED;
+        }
+        *out_meeting_json = newCString(meetingToJson(result.value()));
+        return MSDK_OK;
+    });
 }
 
-void msdk_pipeline_destroy(msdk_pipeline* handle) { delete handle; }
+void msdk_pipeline_destroy(msdk_pipeline* handle) { guardedVoid([&] { delete handle; }); }
 
 struct msdk_diarizer {
     meeting_sdk::speaker::SpeakerClusterer clusterer;
@@ -424,58 +474,65 @@ struct msdk_diarizer {
 };
 
 int32_t msdk_diarizer_create(float similarity_threshold, msdk_diarizer** out_handle) {
-    if (out_handle == nullptr) {
-        return MSDK_ERROR_INVALID_ARGUMENT;
-    }
-    *out_handle = new msdk_diarizer(similarity_threshold);
-    return MSDK_OK;
+    return guarded([&]() -> int32_t {
+        if (out_handle == nullptr) {
+            return MSDK_ERROR_INVALID_ARGUMENT;
+        }
+        *out_handle = new msdk_diarizer(similarity_threshold);
+        return MSDK_OK;
+    });
 }
 
 int32_t msdk_diarizer_assign(msdk_diarizer* handle, const float* embedding, int32_t embedding_length,
                               char** out_speaker_id) {
-    if (handle == nullptr || embedding == nullptr || embedding_length <= 0 || out_speaker_id == nullptr) {
-        return MSDK_ERROR_INVALID_ARGUMENT;
-    }
-    meeting_sdk::core::SpeakerEmbedding e;
-    e.vector.assign(embedding, embedding + embedding_length);
-    auto id = handle->clusterer.assign(std::move(e));
-    *out_speaker_id = newCString(id.value);
-    return MSDK_OK;
+    return guarded([&]() -> int32_t {
+        if (handle == nullptr || embedding == nullptr || embedding_length <= 0 ||
+            out_speaker_id == nullptr) {
+            return MSDK_ERROR_INVALID_ARGUMENT;
+        }
+        meeting_sdk::core::SpeakerEmbedding e;
+        e.vector.assign(embedding, embedding + embedding_length);
+        auto id = handle->clusterer.assign(std::move(e));
+        *out_speaker_id = newCString(id.value);
+        return MSDK_OK;
+    });
 }
 
-void msdk_diarizer_destroy(msdk_diarizer* handle) { delete handle; }
+void msdk_diarizer_destroy(msdk_diarizer* handle) { guardedVoid([&] { delete handle; }); }
 
 int32_t msdk_repository_search_json(msdk_repository* handle, const char* query_text, char** out_json) {
-    if (handle == nullptr || query_text == nullptr || out_json == nullptr) {
-        return MSDK_ERROR_INVALID_ARGUMENT;
-    }
-    auto ids = handle->repository->listAll();
-    if (!ids) {
-        return MSDK_ERROR_STORAGE_FAILED;
-    }
-
-    meeting_sdk::search::InvertedIndexSearch index;
-    for (const auto& id : ids.value()) {
-        auto meeting = handle->repository->get(id);
-        if (meeting) {
-            index.index(id, meeting.value().transcript);
+    return guarded([&]() -> int32_t {
+        if (handle == nullptr || query_text == nullptr || out_json == nullptr) {
+            return MSDK_ERROR_INVALID_ARGUMENT;
         }
-    }
-
-    meeting_sdk::search::SearchQuery query;
-    query.text = query_text;
-    auto results = index.search(query);
-
-    std::ostringstream os;
-    os << "[";
-    for (std::size_t i = 0; i < results.size(); ++i) {
-        if (i > 0) {
-            os << ",";
+        auto ids = handle->repository->listAll();
+        if (!ids) {
+            return MSDK_ERROR_STORAGE_FAILED;
         }
-        os << R"({"meetingId":")" << escapeJson(results[i].meeting.value) << R"(","segmentId":")"
-           << escapeJson(results[i].segment.value) << R"(","score":)" << results[i].score << "}";
-    }
-    os << "]";
-    *out_json = newCString(os.str());
-    return MSDK_OK;
+
+        meeting_sdk::search::InvertedIndexSearch index;
+        for (const auto& id : ids.value()) {
+            auto meeting = handle->repository->get(id);
+            if (meeting) {
+                index.index(id, meeting.value().transcript);
+            }
+        }
+
+        meeting_sdk::search::SearchQuery query;
+        query.text = query_text;
+        auto results = index.search(query);
+
+        std::ostringstream os;
+        os << "[";
+        for (std::size_t i = 0; i < results.size(); ++i) {
+            if (i > 0) {
+                os << ",";
+            }
+            os << R"({"meetingId":")" << escapeJson(results[i].meeting.value) << R"(","segmentId":")"
+               << escapeJson(results[i].segment.value) << R"(","score":)" << results[i].score << "}";
+        }
+        os << "]";
+        *out_json = newCString(os.str());
+        return MSDK_OK;
+    });
 }

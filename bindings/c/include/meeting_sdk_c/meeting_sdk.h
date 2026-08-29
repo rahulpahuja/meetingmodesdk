@@ -9,7 +9,8 @@ extern "C" {
 /* Error codes returned by every msdk_* function. 0 always means success. This is the stable
  * ABI boundary between the C++ core and every native binding (JNI, Kotlin/Native cinterop,
  * Objective-C++) — see docs/architecture/01-requirements-and-architecture.md §2. No C++
- * exception, class, or STL type ever crosses this header. */
+ * exception, class, or STL type ever crosses this header: every entry point catches all
+ * exceptions and maps them to MSDK_ERROR_INTERNAL. */
 typedef enum {
     MSDK_OK = 0,
     MSDK_ERROR_INVALID_ARGUMENT = -1,
@@ -17,6 +18,10 @@ typedef enum {
     MSDK_ERROR_NOT_FOUND = -3,
     MSDK_ERROR_STORAGE_FAILED = -4,
     MSDK_ERROR_PIPELINE_FAILED = -5,
+    /* An unexpected C++ exception was caught at the ABI boundary (e.g. std::bad_alloc). The
+     * core normally reports failure through Result<T> without throwing; this means it threw
+     * anyway. No exception reaches the caller and the library stays usable. */
+    MSDK_ERROR_INTERNAL = -6,
 } msdk_error_t;
 
 /* --- Translation ---------------------------------------------------------------------------

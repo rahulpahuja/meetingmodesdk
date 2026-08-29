@@ -18,9 +18,11 @@ if(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(SQLITE3_LIBRARY meeting_sdk_sqlite3)
 
     set(SODIUM_DISABLE_TESTS ON CACHE BOOL "" FORCE)
+    # Pinned for reproducible cross-compiles — this is robinlinden/libsodium-cmake master as of
+    # 2026-08-29 (it wraps libsodium 1.0.20 via its own submodule pin).
     FetchContent_Declare(libsodium_cmake
         GIT_REPOSITORY https://github.com/robinlinden/libsodium-cmake.git
-        GIT_TAG master
+        GIT_TAG 9b2848dfc1b917a9410f0de9d81059b26cbfaa8d
     )
     FetchContent_MakeAvailable(libsodium_cmake)
     set(SODIUM_LIBRARY sodium)
