@@ -8,9 +8,9 @@ import kotlin.math.sqrt
 
 /**
  * Automatic multi-speaker labeling for the live-speech path ("speaker-1", "speaker-2", ...),
- * without a neural voice-embedding model (none ships in this SDK). Captures raw PCM concurrently
- * with [LiveSpeechRecorder]'s SpeechRecognizer session via a second, independent [AudioRecord],
- * and for each recognized utterance's approximate time window computes a small, real, non-neural
+ * without a neural voice-embedding model (none ships in this SDK). When [start] is called it
+ * captures raw PCM via a second, independent [AudioRecord]; for each recognized utterance's
+ * approximate time window it computes a small, real, non-neural
  * acoustic feature vector (RMS energy, an autocorrelation-based pitch estimate, and zero-crossing
  * rate as a coarse spectral-tilt proxy), then hands it to the SDK's real
  * speaker::SpeakerClusterer (via NativeBridge.diarizer*, wrapping msdk_diarizer_*) for actual
@@ -19,15 +19,18 @@ import kotlin.math.sqrt
  * captured audio and get a real, working clustering algorithm behind them — same honesty bar as
  * DictionaryTranslator/HeuristicLlmEngine elsewhere in this codebase.
  *
- * Whether a third-party app's AudioRecord genuinely receives live samples while a system speech
- * service (SpeechRecognizer) is *also* capturing is not guaranteed by the Android platform (mic
- * arbitration varies by OEM/Android version, and privacy policy on some versions can silence a
- * lower-priority capturer instead of denying it outright — capture can "succeed" while delivering
- * only silence). This class treats that as a runtime condition it detects, not an assumption: if
- * a window's captured audio is at/near silence despite carrying real recognized text,
- * [concurrentCaptureReliable] goes false and every utterance in that session falls back to being
- * assigned the same speaker as the immediately preceding one (an honest "insufficient signal,
- * assume the conversation continued" default) rather than clustering on noise.
+ * Running a second AudioRecord alongside the system SpeechRecognizer is not viable on every
+ * device: on some OEM builds (e.g. this project's test Moto) the concurrent mic open starves the
+ * recognizer's own capture, so it never returns results. Because of that the live path currently
+ * does NOT call [start] — the recognizer owns the mic — and this tagger runs purely in the
+ * fallback below. [start] and the capture path are kept intact for hosts/devices that can
+ * genuinely deliver concurrent capture.
+ *
+ * Fallback: when no PCM is available for an utterance's window (capture never started, or a
+ * window is at/near silence despite carrying real recognized text), [concurrentCaptureReliable]
+ * goes false and every utterance in that session is assigned the same speaker as the immediately
+ * preceding one (an honest "insufficient signal, assume the conversation continued" default)
+ * rather than clustering on noise.
  */
 class AcousticSpeakerTagger(similarityThreshold: Float = 0.75F) {
     private val diarizerHandle: Long = NativeBridge.diarizerCreate(similarityThreshold)

@@ -99,7 +99,11 @@ class MeetingSdkViewModel(application: Application, dbPath: String) : AndroidVie
         speakerTagger = tagger
         viewModelScope.launch(Dispatchers.IO) {
             pipeline.start()
-            tagger.start()
+            // Deliberately NOT tagger.start(): a second concurrent AudioRecord on the mic
+            // starves Android's on-device SpeechRecognizer (SODA hits MIC_END_OF_DATA and
+            // cancels every session before delivering onResults). The recognizer owns the mic;
+            // AcousticSpeakerTagger runs in its no-capture fallback ("same speaker as last
+            // utterance"), which its own doc comment already describes.
         }
 
         _uiState.update {
