@@ -1,7 +1,9 @@
-package com.meetingsdk.jvm
+package com.meetingsdk.impl
 
 import com.meetingsdk.api.MeetingRepository
 import com.meetingsdk.api.SearchService
+import com.meetingsdk.api.TranslationService
+import com.meetingsdk.jvm.NativeBridge
 import com.meetingsdk.model.ActionItem
 import com.meetingsdk.model.Decision
 import com.meetingsdk.model.Meeting
@@ -56,7 +58,19 @@ private data class MeetingJson(
 @Serializable
 private data class SearchResultJson(val meetingId: String, val segmentId: String, val score: Int)
 
-class JvmMeetingRepository(dbPath: String) : MeetingRepository {
+/** On-device translation over the native GatedTranslator. Identical on every platform. */
+class NativeTranslationService : TranslationService {
+    override fun translate(text: String, targetBcp47: String): Result<String> {
+        val translated = NativeBridge.translate(text, targetBcp47)
+        return if (translated != null) {
+            Result.success(translated)
+        } else {
+            Result.failure(IllegalArgumentException("translation failed for target '$targetBcp47'"))
+        }
+    }
+}
+
+class NativeMeetingRepository(dbPath: String) : MeetingRepository {
     internal val handle: Long = NativeBridge.repositoryOpen(dbPath)
 
     init {
@@ -93,9 +107,9 @@ class JvmMeetingRepository(dbPath: String) : MeetingRepository {
     override fun close() = NativeBridge.repositoryClose(handle)
 }
 
-/** Searches over the meetings held by a given [JvmMeetingRepository] — same native handle, no
- * separate connection. */
-class JvmSearchService(private val repository: JvmMeetingRepository) : SearchService {
+/** Searches over the meetings held by a given [NativeMeetingRepository] — same native handle,
+ * no separate connection. */
+class NativeSearchService(private val repository: NativeMeetingRepository) : SearchService {
     override fun search(queryText: String): List<SearchResult> {
         val json = NativeBridge.repositorySearchJson(repository.handle, queryText) ?: return emptyList()
         return Json.decodeFromString<List<SearchResultJson>>(json)

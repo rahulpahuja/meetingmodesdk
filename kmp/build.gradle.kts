@@ -8,18 +8,32 @@ repositories {
 }
 
 kotlin {
-    // Only the JVM target is built/verified in Milestone 8. androidTarget() and iosArm64()/
-    // iosSimulatorArm64() are added in Milestones 9 and 10 respectively, alongside the
-    // platform-specific capture/permissions/lifecycle work those milestones own — commonMain
-    // below does not need to change when they are.
+    // `expect object NativeBridge` is the one intentional expect/actual *class* in this module;
+    // the Beta-warning it triggers is just noise here.
+    compilerOptions {
+        freeCompilerArgs.add("-Xexpect-actual-classes")
+    }
+
+    // One shared module, two consumers: Android/desktop via JVM+JNI (bindings/kotlin/jni),
+    // Apple via Kotlin/Native cinterop straight onto the same stable C ABI (bindings/c). All
+    // logic lives in commonMain; each platform supplies only the thin `actual` NativeBridge.
     jvm()
 
+    listOf(iosArm64(), iosSimulatorArm64(), iosX64()).forEach { target ->
+        target.compilations.getByName("main").cinterops.create("meeting_sdk_c") {
+            definitionFile.set(project.file("src/nativeInterop/cinterop/meeting_sdk_c.def"))
+            includeDirs(project.file("../bindings/c/include"))
+        }
+        // The meeting_sdk_c static library is linked by the consuming Xcode project (the same way
+        // the Android app links the JNI .so), so no staticLibrary is wired in here.
+    }
+
     sourceSets {
+        commonMain.dependencies {
+            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+        }
         commonTest.dependencies {
             implementation(kotlin("test"))
-        }
-        jvmMain.dependencies {
-            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
         }
         jvmTest.dependencies {
             implementation(kotlin("test-junit5"))

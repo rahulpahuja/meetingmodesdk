@@ -1,19 +1,23 @@
 package com.meetingsdk.jvm
 
+import com.meetingsdk.impl.NativeMeetingRepository
+import com.meetingsdk.impl.NativeSearchService
+import com.meetingsdk.impl.NativeTranslationService
 import com.meetingsdk.model.MeetingState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-// End-to-end proof of the native bindings: Kotlin -> JNI (bindings/kotlin/jni) -> C API
-// (bindings/c) -> C++ core (meeting-sdk). Exhaustive behavioral testing of the underlying
-// C++ classes already lives in meeting-sdk's own GoogleTest suite; this only proves the
-// cross-language boundary works.
+// End-to-end proof of the native bindings on the JVM path: Kotlin (commonMain) -> JNI
+// (bindings/kotlin/jni) -> C API (bindings/c) -> C++ core (meeting-sdk). The commonMain logic
+// exercised here is identical to what the iOS target runs over cinterop. Exhaustive behavioral
+// testing of the underlying C++ classes already lives in meeting-sdk's own GoogleTest suite;
+// this only proves the cross-language boundary works.
 class NativeBridgeIntegrationTest {
     @Test
     fun translateRoundTripsThroughNativeCode() {
-        val service = JvmTranslationService()
+        val service = NativeTranslationService()
         val result = service.translate("namaste, kaise hain aap", "en")
         assertTrue(result.isSuccess)
         assertEquals("hello, how hain you", result.getOrThrow())
@@ -21,13 +25,13 @@ class NativeBridgeIntegrationTest {
 
     @Test
     fun translateOfUnsupportedLanguageFails() {
-        val service = JvmTranslationService()
+        val service = NativeTranslationService()
         assertTrue(service.translate("hello", "fr").isFailure)
     }
 
     @Test
     fun repositorySavesAndReadsBackAMeeting() {
-        val repo = JvmMeetingRepository(":memory:")
+        val repo = NativeMeetingRepository(":memory:")
         try {
             assertTrue(repo.saveSimpleMeeting("m1", "hello from the JVM"))
 
@@ -43,7 +47,7 @@ class NativeBridgeIntegrationTest {
 
     @Test
     fun repositoryListsAndRemovesMeetings() {
-        val repo = JvmMeetingRepository(":memory:")
+        val repo = NativeMeetingRepository(":memory:")
         try {
             repo.saveSimpleMeeting("m1", "first")
             repo.saveSimpleMeeting("m2", "second")
@@ -59,7 +63,7 @@ class NativeBridgeIntegrationTest {
 
     @Test
     fun getMeetingOnMissingIdReturnsNull() {
-        val repo = JvmMeetingRepository(":memory:")
+        val repo = NativeMeetingRepository(":memory:")
         try {
             assertNull(repo.getMeeting("nonexistent"))
         } finally {
@@ -69,7 +73,7 @@ class NativeBridgeIntegrationTest {
 
     @Test
     fun runDemoMeetingPersistsTranscriptAndIntelligence() {
-        val repo = JvmMeetingRepository(":memory:")
+        val repo = NativeMeetingRepository(":memory:")
         try {
             assertTrue(repo.runDemoMeeting("demo1"))
 
@@ -86,8 +90,8 @@ class NativeBridgeIntegrationTest {
 
     @Test
     fun searchFindsAKeywordAcrossSavedMeetings() {
-        val repo = JvmMeetingRepository(":memory:")
-        val search = JvmSearchService(repo)
+        val repo = NativeMeetingRepository(":memory:")
+        val search = NativeSearchService(repo)
         try {
             repo.saveSimpleMeeting("m1", "let's discuss the launch plan")
             val results = search.search("launch")

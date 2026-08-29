@@ -1,0 +1,4 @@
+# cinterop over the stable C ABI (bindings/c/include/meeting_sdk_c/meeting_sdk.h) — the same
+# header the JNI layer wraps. No C++ types cross it, so Kotlin/Native can bind it directly.
+headers = meeting_sdk_c/meeting_sdk.h
+package = meeting_sdk_c
