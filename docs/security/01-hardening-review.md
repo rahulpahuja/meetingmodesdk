@@ -70,7 +70,17 @@ trip, id listing, inverted-index search). Two build targets behind
 
 A small seed corpus lives in `bindings/c/fuzz/corpus/`.
 
+## Packaging — PARTIAL
+
+- **KMP** — `kmp/build.gradle.kts` applies `maven-publish` (group `com.meetingsdk`,
+  version `0.1.0`); `gradle publishToMavenLocal` produces the multiplatform module
+  + per-target artifacts, and a `GitHubPackages` repo is wired for `publish`.
+- **Apple** — root `Package.swift` exposes `MeetingSdkKit` as an SPM `binaryTarget`
+  pointing at the built XCFramework (`swift package describe` validates it).
+- **Android AAR** — not done; the app still builds the JNI/core via its own
+  `externalNativeBuild`.
+
 ## Not in this pass
 
 Performance/memory profiling, a coverage-guided fuzz campaign of meaningful length
-in CI, crash-reporting integration, and release packaging (Maven / SPM / AAR).
+in CI, crash-reporting integration, an Android AAR, and publishing signed releases.

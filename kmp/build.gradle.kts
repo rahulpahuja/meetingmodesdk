@@ -3,10 +3,30 @@ import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
 plugins {
     kotlin("multiplatform") version "2.1.20"
     kotlin("plugin.serialization") version "2.1.20"
+    `maven-publish`
 }
+
+group = "com.meetingsdk"
+version = "0.1.0"
 
 repositories {
     mavenCentral()
+}
+
+// `gradle publishToMavenLocal` makes the shared module resolvable as
+// com.meetingsdk:kmp:0.1.0 (all published targets: jvm, iosArm64, iosSimulatorArm64) — the
+// kotlin("multiplatform") plugin wires the per-target publications automatically.
+publishing {
+    repositories {
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/rahulpahuja/meetingmodesdk")
+            credentials {
+                username = providers.gradleProperty("gpr.user").orElse(providers.environmentVariable("GITHUB_ACTOR")).orNull
+                password = providers.gradleProperty("gpr.key").orElse(providers.environmentVariable("GITHUB_TOKEN")).orNull
+            }
+        }
+    }
 }
 
 kotlin {
