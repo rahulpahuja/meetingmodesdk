@@ -45,3 +45,30 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     enable_testing()
     add_test(NAME smoke_test COMMAND meeting_sdk_c_smoke_test)
 endif()
+
+# Fuzzing the C ABI. Enable with -DMEETING_SDK_BUILD_FUZZERS=ON and, for a meaningful run, also
+# -DMEETING_SDK_C_SHARED=OFF -DMEETING_SDK_ENABLE_ASAN=ON so the whole core is instrumented and
+# linked in statically.
+#   * fuzz_c_abi_replay — portable: replays a corpus / crash file under ASan+UBSan, no libFuzzer
+#     runtime needed, builds on any toolchain (incl. Apple Clang, which ships no fuzzer runtime).
+#   * fuzz_c_abi        — coverage-guided libFuzzer; only when the toolchain provides its runtime.
+option(MEETING_SDK_BUILD_FUZZERS "Build the C ABI fuzz harness" OFF)
+if(MEETING_SDK_BUILD_FUZZERS)
+    add_executable(fuzz_c_abi_replay fuzz/fuzz_c_abi.cpp fuzz/standalone_main.cpp)
+    target_link_libraries(fuzz_c_abi_replay PRIVATE meeting_sdk::c meeting_sdk_compiler_options)
+
+    include(CheckCXXSourceCompiles)
+    set(CMAKE_REQUIRED_FLAGS "-fsanitize=fuzzer")
+    check_cxx_source_compiles(
+        "extern \"C\" int LLVMFuzzerTestOneInput(const unsigned char*, long){return 0;}"
+        MEETING_SDK_HAVE_LIBFUZZER)
+    unset(CMAKE_REQUIRED_FLAGS)
+    if(MEETING_SDK_HAVE_LIBFUZZER)
+        add_executable(fuzz_c_abi fuzz/fuzz_c_abi.cpp)
+        target_link_libraries(fuzz_c_abi PRIVATE meeting_sdk::c meeting_sdk_compiler_options)
+        target_compile_options(fuzz_c_abi PRIVATE -fsanitize=fuzzer-no-link)
+        target_link_options(fuzz_c_abi PRIVATE -fsanitize=fuzzer)
+    else()
+        message(STATUS "libFuzzer runtime unavailable; building fuzz_c_abi_replay only")
+    endif()
+endif()

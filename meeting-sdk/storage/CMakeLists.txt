@@ -38,6 +38,7 @@ else()
 endif()
 
 add_library(meeting_sdk_storage STATIC
+    src/sodium_runtime.cpp
     src/in_memory_key_provider.cpp
     src/sodium_encryptor.cpp
     src/meeting_serializer.cpp

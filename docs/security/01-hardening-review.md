@@ -42,17 +42,35 @@ ciphertext — no nonce reuse. Key length is validated on both encrypt and decry
 decrypt rejects anything shorter than nonce + MAC and returns an error (never
 partial plaintext) on authentication failure.
 
-*Low-severity:* `sodium_init()`'s return value is discarded in `SodiumEncryptor` and
-`InMemoryKeyProvider`. A `-1` (init failure) is not surfaced. In practice
-`randombytes_buf` is safe pre-init on the supported platforms; worth returning a
-`Result` error here in a future pass.
+**Fixed:** `sodium_init()`'s return value used to be discarded in `SodiumEncryptor`
+and `InMemoryKeyProvider`, so a `-1` (init failure) went unnoticed. Initialization
+is now funnelled through `storage/src/sodium_runtime.cpp`'s
+`detail::ensureSodiumInitialized()` (a thread-safe function-local static), and
+`encrypt` / `decrypt` / `getOrCreateKey` return
+`Security / storage.crypto_init_failed` instead of touching the CSPRNG when it
+reports failure.
 
 ## Reproducibility — FIXED
 
 `storage/CMakeLists.txt` fetched `robinlinden/libsodium-cmake` at `GIT_TAG master`
 for the Android and iOS builds — a moving target. Now pinned to an explicit commit.
 
+## Fuzzing — ADDED
+
+`bindings/c/fuzz/` drives arbitrary bytes through the whole C ABI (translate,
+`escapeJson` / `meetingToJson`, the encrypt → SQLite → decrypt → deserialize round
+trip, id listing, inverted-index search). Two build targets behind
+`-DMEETING_SDK_BUILD_FUZZERS=ON`:
+
+- `fuzz_c_abi_replay` — portable ASan/UBSan corpus + crash-file replayer, no
+  libFuzzer runtime required (Apple Clang ships none). Ran clean over empty,
+  control-char, quote-/backslash-heavy, 200 KB random, and word-dense inputs.
+- `fuzz_c_abi` — coverage-guided libFuzzer, built only where the toolchain provides
+  the runtime (Linux Clang / `brew install llvm`); for CI and longer campaigns.
+
+A small seed corpus lives in `bindings/c/fuzz/corpus/`.
+
 ## Not in this pass
 
-Performance/memory profiling, fuzzing of the JSON writer and the C ABI string
-inputs, crash-reporting integration, and release packaging (Maven / SPM / AAR).
+Performance/memory profiling, a coverage-guided fuzz campaign of meaningful length
+in CI, crash-reporting integration, and release packaging (Maven / SPM / AAR).

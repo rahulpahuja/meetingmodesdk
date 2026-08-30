@@ -2,14 +2,31 @@
 
 #include <sodium.h>
 
+#include "sodium_runtime.hpp"
+
 namespace meeting_sdk::storage {
 
-SodiumEncryptor::SodiumEncryptor() { static_cast<void>(sodium_init()); }
+namespace {
+
+core::Error cryptoInitError() {
+    return core::Error{
+        .category = core::ErrorCategory::Security,
+        .code = "storage.crypto_init_failed",
+        .message = "libsodium failed to initialize; encryption is unavailable",
+    };
+}
+
+}  // namespace
+
+SodiumEncryptor::SodiumEncryptor() { static_cast<void>(detail::ensureSodiumInitialized()); }
 
 std::size_t SodiumEncryptor::keyLength() const noexcept { return crypto_secretbox_KEYBYTES; }
 
 core::Result<std::vector<std::uint8_t>> SodiumEncryptor::encrypt(const std::vector<std::uint8_t>& plaintext,
                                                                    const std::vector<std::uint8_t>& key) {
+    if (!detail::ensureSodiumInitialized()) {
+        return cryptoInitError();
+    }
     if (key.size() != crypto_secretbox_KEYBYTES) {
         return core::Error{
             .category = core::ErrorCategory::Security,
@@ -33,6 +50,9 @@ core::Result<std::vector<std::uint8_t>> SodiumEncryptor::encrypt(const std::vect
 
 core::Result<std::vector<std::uint8_t>> SodiumEncryptor::decrypt(const std::vector<std::uint8_t>& ciphertext,
                                                                    const std::vector<std::uint8_t>& key) {
+    if (!detail::ensureSodiumInitialized()) {
+        return cryptoInitError();
+    }
     if (key.size() != crypto_secretbox_KEYBYTES) {
         return core::Error{
             .category = core::ErrorCategory::Security,

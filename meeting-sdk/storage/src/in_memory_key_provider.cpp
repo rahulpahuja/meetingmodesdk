@@ -2,16 +2,22 @@
 
 #include <sodium.h>
 
+#include "sodium_runtime.hpp"
+
 namespace meeting_sdk::storage {
 
 InMemoryKeyProvider::InMemoryKeyProvider(std::size_t keyLengthBytes) : keyLengthBytes_(keyLengthBytes) {
-    // Return value intentionally ignored: 0 = first init, 1 = already initialized, both fine;
-    // -1 (init failed) would make randombytes_buf below unsafe, but libsodium has no documented
-    // failure mode on supported platforms — idempotent and safe to call from multiple sites.
-    static_cast<void>(sodium_init());
+    static_cast<void>(detail::ensureSodiumInitialized());
 }
 
 core::Result<std::vector<std::uint8_t>> InMemoryKeyProvider::getOrCreateKey(const core::MeetingId& id) {
+    if (!detail::ensureSodiumInitialized()) {
+        return core::Error{
+            .category = core::ErrorCategory::Security,
+            .code = "storage.crypto_init_failed",
+            .message = "libsodium failed to initialize; cannot generate a key",
+        };
+    }
     std::lock_guard<std::mutex> lock(mutex_);
     const auto it = keys_.find(id.value);
     if (it != keys_.end()) {
